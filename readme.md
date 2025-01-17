@@ -3,7 +3,7 @@
 #
 **1. Clone the Repo **
 
- git clone ht/tps://github.com/gspreddy6869/WhatsApp-Bot
+ git clone https://github.com/gspreddy6869/WhatsApp-Bot.git
 
  **2. Move to Directory **
  
