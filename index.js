@@ -9,8 +9,12 @@ venom.create({
     console.log('Bot is ready!');
 
     client.onMessage(async (message) => {
+        if(message.body === "hi" || message.body === "hello" || message.body === "Hi"){
+            client.sendText(message.from, 'Welcome! How can I assist you today?')
+        }
+    
         // If the message is a roll number with length 10
-        if (message.body.trim().length === 10) {
+        else if (message.body.trim().length === 10) {
             const rollNo = message.body.trim();
             console.log(`Roll number received: ${rollNo}`);
 
