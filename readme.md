@@ -8,7 +8,7 @@
  
   cd WhatsApp-Bot
 
-  **3. Run the project **
+  **3. Run the project**
 
  1.  npm install
 
