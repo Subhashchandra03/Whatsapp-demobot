@@ -1,6 +1,6 @@
 **To preview Project**
 #
-**1. Clone the Repo **
+**1.Clone the Repo**
 
  git clone https://github.com/gspreddy6869/WhatsApp-Bot.git
 
