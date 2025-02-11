@@ -1,4 +1,4 @@
-** To preview Project **
+**To preview Project**
 #
 **1. Clone the Repo **
 
