@@ -2,9 +2,9 @@
 #
 **1.Clone the Repo**
 
- git clone https://github.com/gspreddy6869/WhatsApp-Bot.git
+ **git clone** https://github.com/gspreddy6869/WhatsApp-Bot.git
 
- **2. Move to Directory **
+ **2. Move to Directory**
  
   cd WhatsApp-Bot
 
