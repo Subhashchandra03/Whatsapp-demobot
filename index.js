@@ -1,105 +1,126 @@
 const puppeteer = require('puppeteer');
-const venom = require('venom-bot');
+const {
+    makeWASocket,
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    logger
+} = require('@whiskeysockets/baileys');
+const qrcode = require('qrcode-terminal');
 
-// Your bot setup code here
-venom.create({
-    session: 'my-whatsapp-session',
-    multidevice: true,
-}).then((client) => {
-    console.log('Bot is ready!');
+// Silence the logger
 
-    client.onMessage(async (message) => {
-        if(message.body === "hi" || message.body === "hello" || message.body === "Hi"){
-            client.sendText(message.from, 'Welcome! How can I assist you today?')
-        }
-    
-        // If the message is a roll number with length 10
-        else if (message.body.trim().length === 10) {
-            const rollNo = message.body.trim();
-            console.log(`Roll number received: ${rollNo}`);
 
-            try {
-                // Call the function to fetch result from the website
-                const result = await getResultFromWebsite(rollNo);
+// Baileys setup
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { version } = await fetchLatestBaileysVersion();
 
-                // Send the result back to the user
-                client.sendText(message.from, `Attendance for roll number ${rollNo}: ${result}`)
-                    .then((result) => {
-                        console.log('Attendance sent:', result);
-                    })
-                    .catch((error) => {
-                        console.error('Error sending attendance:', error);
-                    });
-            } catch (error) {
-                client.sendText(message.from, 'Sorry, I could not fetch the result at the moment.')
-                    .then((result) => {
-                        console.log('Error response sent:', result);
-                    })
-                    .catch((error) => {
-                        console.error('Error sending message:', error);
-                    });
-            }
-        } else {
-            client.sendText(message.from, 'I did not understand that. Please enter a valid roll number (exactly 10 characters).')
-                .then((result) => {
-                    console.log('Error response sent:', result);
-                })
-                .catch((error) => {
-                    console.error('Error sending message:', error);
-                });
+    const sock = makeWASocket({
+        version,
+        auth: state
+    });
+
+    // Listen for QR code to show
+    sock.ev.on('connection.update', (update) => {
+        const { qr } = update;
+        if (qr) {
+            qrcode.generate(qr, { small: true });
         }
     });
 
-    // Function to scrape result from the website using Puppeteer
-    async function getResultFromWebsite(rollNo) {
-        const browser = await puppeteer.launch({ headless: false }); // Run in non-headless mode for debugging
-        const page = await browser.newPage();
-        
-        // Navigate to the login page
-        await page.goto('http://tkrcet.in/');
+    sock.ev.on('creds.update', saveCreds);
 
-        // Input the roll number as both username and password
-        await page.type('#login-username', rollNo); // Replace with the actual selector for username
-        await page.type('#login-password', rollNo); // Replace with the actual selector for password
-
-        // Click the login button
-        await page.click('.btn.btn-primary.btn-sm.bg-gradient.btn-signin'); // Replace with the actual selector for login button
-
-        // Wait for the page to load after login
-        await page.waitForNavigation({ waitUntil: 'networkidle0' });
-
-        // Log the current URL after login to verify navigation
-        console.log('Current URL after login:', page.url());
-
-        // Wait for the results table to appear
-        await page.waitForSelector('.table.table-bordered.border-danger.table-sm.small.fw-semibold.mb-2', { timeout: 5000 });
-
-        // Extract the result from the table
-        const result = await page.evaluate(() => {
-            const table = document.querySelector('.table.table-bordered.border-danger.table-sm.small.fw-semibold.mb-2');
-            if (table) {
-                const rows = table.querySelectorAll('tr');
-                let results = '';
-                rows.forEach((row) => {
-                    const cells = row.querySelectorAll('td');
-                    cells.forEach((cell) => {
-                        results += cell.innerText + ' ';
-                    });
-                    results += '\n';
-                });
-                return results.trim();
-            } else {
-                return 'No results found.';
-            }
-        });
-
-        // Close the browser
-        await browser.close();
-
-        return result;
+    function extractText(msg) {
+        if (!msg.message) return '';
+        if (msg.message.conversation) return msg.message.conversation;
+        if (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) return msg.message.extendedTextMessage.text;
+        if (msg.message.imageMessage && msg.message.imageMessage.caption) return msg.message.imageMessage.caption;
+        if (msg.message.videoMessage && msg.message.videoMessage.caption) return msg.message.videoMessage.caption;
+        if (msg.message.ephemeralMessage) return extractText({ message: msg.message.ephemeralMessage.message });
+        if (msg.message.viewOnceMessage) return extractText({ message: msg.message.viewOnceMessage.message });
+        if (msg.message.buttonsResponseMessage && msg.message.buttonsResponseMessage.selectedButtonId) return msg.message.buttonsResponseMessage.selectedButtonId;
+        if (msg.message.listResponseMessage && msg.message.listResponseMessage.singleSelectReply && msg.message.listResponseMessage.singleSelectReply.selectedRowId) return msg.message.listResponseMessage.singleSelectReply.selectedRowId;
+        return '';
     }
 
-}).catch((error) => {
-    console.error('Error during bot initialization:', error);
-});
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const msg = messages[0];
+        if (!msg.message || !msg.key.remoteJid || msg.key.fromMe) return;
 
+        console.log('Received message:', JSON.stringify(msg, null, 2));
+
+        const text = extractText(msg).trim();
+        const jid = msg.key.remoteJid;
+
+        if (['hi', 'hello', 'Hi', 'Hello'].includes(text)) {
+            await sock.sendMessage(jid, { text: '👋 Welcome! Please send your 10-digit Roll Number.' });
+        } else if (/^[a-zA-Z0-9]{10}$/.test(text)) {
+            const rollNo = text;
+            console.log(`Received roll number: ${rollNo}`);
+
+            try {
+                const result = await getResultFromWebsite(rollNo);
+                await sock.sendMessage(jid, { text: `📄 Attendance for ${rollNo}:\n\n${result}` });
+            } catch (error) {
+                console.error('Error fetching result:', error);
+                await sock.sendMessage(jid, { text: '❌ Sorry, unable to fetch the result. Please try again later or check your roll number.' });
+            }
+        } else {
+            await sock.sendMessage(jid, { text: '⚠️ Please enter a valid 10-character roll number (letters and digits allowed).' });
+        }
+    });
+}
+
+// Puppeteer-based scraping
+async function getResultFromWebsite(rollNo) {
+    const browser = await puppeteer.launch({
+        headless: 'new',
+        executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // adjust if needed
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await browser.newPage();
+
+    try {
+        await page.goto('http://tkrcet.in/', { waitUntil: 'networkidle0' });
+
+        // Fill login form
+        await page.type('#login-username', rollNo);
+        await page.type('#login-password', rollNo);
+        await page.click('.btn.btn-primary.btn-sm.bg-gradient.btn-signin');
+        await page.waitForNavigation({ waitUntil: 'networkidle0' });
+
+        const currentUrl = page.url();
+        if (currentUrl.includes('login')) {
+            throw new Error('Login failed. Possibly invalid roll number.');
+        }
+
+        await page.waitForSelector('.table.table-bordered.border-danger.table-sm.small.fw-semibold.mb-2', { timeout: 5000 });
+
+        const result = await page.evaluate(() => {
+            const table = document.querySelector('.table.table-bordered.border-danger.table-sm.small.fw-semibold.mb-2');
+            if (!table) return 'No result table found.';
+
+            let resultText = '';
+            const rows = table.querySelectorAll('tr');
+
+            rows.forEach((row) => {
+                const cells = row.querySelectorAll('td');
+                const rowText = Array.from(cells).map(cell => cell.innerText).join(' | ');
+                resultText += rowText + '\n';
+            });
+
+            return resultText.trim();
+        });
+
+        await browser.close();
+        return result;
+    } catch (err) {
+        await browser.close();
+        throw err;
+    }
+}
+
+startBot().catch((err) => {
+    console.error('Bot crashed:', err);
+});
